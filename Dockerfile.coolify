@@ -1,0 +1,19 @@
+FROM node:23-bookworm AS frontend
+RUN apt-get update && apt-get install -y --no-install-recommends git zstd && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+RUN git clone --depth=1 https://github.com/komari-monitor/komari-web.git && cd komari-web && npm install && npm run build
+RUN mkdir -p /theme && tar -cf /tmp/theme.tar -C /build/komari-web/dist . && zstd -19 -T0 -q /tmp/theme.tar -o /theme/dist.tar.zst && cp /build/komari-web/komari-theme.json /theme/ && if [ -f /build/komari-web/preview.png ]; then cp /build/komari-web/preview.png /theme/preview.png && cp /build/komari-web/preview.png /theme/perview.png; elif [ -f /build/komari-web/perview.png ]; then cp /build/komari-web/perview.png /theme/perview.png && cp /build/komari-web/perview.png /theme/preview.png; fi
+
+FROM golang:1.25-bookworm AS builder
+WORKDIR /src
+COPY . .
+COPY --from=frontend /theme/ /src/web/public/defaultTheme/
+RUN CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o /komari .
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tzdata && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=builder /komari /app/komari
+ENV GIN_MODE=release KOMARI_LISTEN=0.0.0.0:25774 GODEBUG=disablethp=1
+EXPOSE 25774
+CMD ["/app/komari", "server"]
